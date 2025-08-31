@@ -390,6 +390,18 @@ def mul_relu_block_back_kernel(
     block_id_i = tl.program_id(0)
     block_id_j = tl.program_id(1)
     # Finish me!
+    off_i = block_id_i * B0 + tl.arange(0, B0)
+    off_j = block_id_j * B1 + tl.arange(0, B1)
+    off_x = off_j[:, None] * N0 + off_i[None, :]
+    mask_i = off_i < N0
+    mask_j = off_j < N1
+    mask_z = mask_i[None, :] & mask_j[:, None]
+    x = tl.load(x_ptr + off_x, mask=mask_z)
+    dz = tl.load(dz_ptr + off_x, mask=mask_z)
+    y = tl.load(y_ptr + off_j, mask=mask_j)
+    dx = dz * y[:, None]
+    dx = tl.where(x * y[:, None] > 0, dx, 0)
+    tl.store(dx_ptr + off_x, dx, mask=mask_z)
     return
 
 
@@ -415,6 +427,20 @@ def sum_spec(x: Float32[4, 200]) -> Float32[4,]:
 @triton.jit
 def sum_kernel(x_ptr, z_ptr, N0, N1, T, B0: tl.constexpr, B1: tl.constexpr):
     # Finish me!
+    block_id = tl.program_id(0)
+    off_i = block_id * B0 + tl.arange(0, B0)
+    mask_i = off_i < N0
+
+    z = tl.zeros([B0], dtype=tl.float32)
+    for start_j in tl.range(0, T, B1):
+        off_j = start_j + tl.arange(0, B1)
+        off_ij = off_i[:, None] * T + off_j[None, :]
+        mask_j = off_j < T
+        mask_ij = mask_i[:, None] & mask_j[None, :]
+        x = tl.load(x_ptr + off_ij, mask=mask_ij)
+        z += tl.sum(x, axis=1)
+    tl.store(z_ptr + off_i, z, mask=mask_i)
+
     return
 
 
