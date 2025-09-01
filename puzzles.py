@@ -482,6 +482,36 @@ def softmax_kernel(x_ptr, z_ptr, N0, N1, T, B0: tl.constexpr, B1: tl.constexpr):
     block_id_i = tl.program_id(0)
     log2_e = 1.44269504
     # Finish me!
+    off_i = block_id_i * B0 + tl.arange(0, B0)
+    mask_i = off_i < N0
+
+    x_max = tl.full([B0], float('-inf'), dtype=tl.float32)
+    cur_x_max = tl.full([B0], float('-inf'), dtype=tl.float32)
+    exp_sum = tl.zeros([B0], dtype=tl.float32)
+
+    # exp(x-new_max)=exp(x-old_max+old_max-new_max)=exp(x-old_max)*exp(old_max-new_max)
+    for start_j in tl.range(0, T, B1):
+        off_j = start_j + tl.arange(0, B1)
+        off_ij = off_i[:, None] * T + off_j[None, :]
+        mask_j = off_j < T
+        mask_ij = mask_i[:, None] & mask_j[None, :]
+        x = tl.load(x_ptr + off_ij, mask=mask_ij)
+        cur_x_max = tl.maximum(x_max, x.max(axis=1))
+        exp_x = tl.exp2(log2_e * (x - cur_x_max[:, None]))
+        exp_sum *= tl.exp2(log2_e * (x_max - cur_x_max))
+        exp_sum += exp_x.sum(axis=1)
+        x_max = cur_x_max
+    
+    for start_j in tl.range(0, T, B1):
+        off_j = start_j + tl.arange(0, B1)
+        off_ij = off_i[:, None] * T + off_j[None, :]
+        mask_j = off_j < T
+        mask_ij = mask_i[:, None] & mask_j[None, :]
+        x = tl.load(x_ptr + off_ij, mask=mask_ij)
+        exp_x = tl.exp2(log2_e * (x - x_max[:, None]))
+        z = exp_x / exp_sum[:, None]
+        tl.store(z_ptr + off_ij, z, mask=mask_ij)
+    
     return
 
 
@@ -493,6 +523,39 @@ def softmax_kernel_brute_force(
     block_id_i = tl.program_id(0)
     log2_e = 1.44269504
     # Finish me!
+    off_i = block_id_i * B0 + tl.arange(0, B0)
+    mask_i = off_i < N0
+
+    x_max = tl.full([B0], float('-inf'), dtype=tl.float32)
+    exp_sum = tl.zeros([B0], dtype=tl.float32)
+
+    for start_j in tl.range(0, T, B1):
+        off_j = start_j + tl.arange(0, B1)
+        off_ij = off_i[:, None] * T + off_j[None, :]
+        mask_j = off_j < T
+        mask_ij = mask_i[:, None] & mask_j[None, :]
+        x = tl.load(x_ptr + off_ij, mask=mask_ij)
+        x_max = tl.maximum(x_max, x.max(axis=1))
+    
+    for start_j in tl.range(0, T, B1):
+        off_j = start_j + tl.arange(0, B1)
+        off_ij = off_i[:, None] * T + off_j[None, :]
+        mask_j = off_j < T
+        mask_ij = mask_i[:, None] & mask_j[None, :]
+        x = tl.load(x_ptr + off_ij, mask=mask_ij)
+        exp_x = tl.exp2(log2_e * (x - x_max[:, None]))
+        exp_sum += exp_x.sum(axis=1)
+
+    for start_j in tl.range(0, T, B1):
+        off_j = start_j + tl.arange(0, B1)
+        off_ij = off_i[:, None] * T + off_j[None, :]
+        mask_j = off_j < T
+        mask_ij = mask_i[:, None] & mask_j[None, :]
+        x = tl.load(x_ptr + off_ij, mask=mask_ij)
+        exp_x = tl.exp2(log2_e * (x - x_max[:, None]))
+        z = exp_x / exp_sum[:, None]
+        tl.store(z_ptr + off_ij, z, mask=mask_ij)
+
     return
 
 
@@ -779,6 +842,7 @@ def run_puzzles(args, puzzles: List[int]):
         print("Puzzle #8:")
         ok = test(
             softmax_kernel,
+            # softmax_kernel_brute_force,
             softmax_spec,
             B={"B0": 1, "B1": 32},
             nelem={"N0": 4, "N1": 32, "T": 200},
