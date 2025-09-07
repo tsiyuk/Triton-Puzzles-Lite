@@ -594,6 +594,36 @@ def flashatt_kernel(
     log2_e = 1.44269504
     myexp = lambda x: tl.exp2(log2_e * x)
     # Finish me!
+    mask_num = -1.0e6
+
+    off_i = block_id_i * B0 + tl.arange(0, B0)
+    mask_i = off_i < N0
+    l = tl.zeros([B0], dtype=tl.float32)
+    m = tl.full([B0], float('-inf'), dtype=tl.float32)
+    z = tl.zeros([B0], dtype=tl.float32)
+
+    q = tl.load(q_ptr + off_i, mask=mask_i)
+    for base_j in tl.range(0, T, B1):
+        off_j = base_j + tl.arange(0, B1)
+        mask_j = off_j < T
+        k = tl.load(k_ptr + off_j, mask=mask_j)
+        mask_ij = mask_i[:, None] & mask_j[None, :]
+        qk = q[:, None] * k[None, :] + tl.where(mask_ij, 0, mask_num)
+        qk_max = tl.maximum(m, qk.max(axis=1))
+        factor = tl.exp2(log2_e * (m - qk_max))
+
+        exp_qk = tl.exp2(log2_e * (qk - qk_max[:, None])) #[B0, B1]
+        exp_sum = l * factor + exp_qk.sum(axis=1)
+
+        v = tl.load(v_ptr + off_j, mask=mask_j, other=0.0)
+        z = z * factor + tl.sum(exp_qk * v[None, :], axis=1)
+
+        m = qk_max
+        l = exp_sum
+
+    z = z / l
+    tl.store(z_ptr + off_i, z, mask=mask_i)
+
     return
 
 
