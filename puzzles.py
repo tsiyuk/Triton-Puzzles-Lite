@@ -657,6 +657,25 @@ def conv2d_kernel(
 ):
     block_id_i = tl.program_id(0)
     # Finish me!
+    off_i = block_id_i * B0 + tl.arange(0, B0)
+    mask_i = off_i < N0
+
+    off_h = tl.arange(0, KH)
+    off_w = tl.arange(0, KW)
+    off_hw = off_h[:, None] * KW + off_w[None, :]
+
+    k = tl.load(k_ptr+off_hw)
+
+    for j in range(0, H):
+        for l in range(0, W):
+            off_j = j + off_h[None, :, None]
+            off_l = l + off_w[None, None, :]
+            off_ijl = off_i[:,None, None] * H * W + off_j * W + off_l
+            mask_ijl = (mask_i)[:, None, None] & (off_j < H) & (off_l < W)
+            x = tl.load(x_ptr+off_ijl, mask=mask_ijl)
+            z = tl.sum(x * k[None, :, :])
+            off_z =  off_i * H * W + j * W + l
+            tl.store(z_ptr + off_z, z)
     return
 
 
